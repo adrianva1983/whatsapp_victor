@@ -1,0 +1,354 @@
+# Proyecto WhatsApp Multi-Device con Baileys
+
+## Arquitectura del Sistema
+
+### Componentes principales:
+- **App Simple** (Puerto 3000): Conexión individual de dispositivos WhatsApp
+- **Dashboard** (Puerto 3001): Monitoreo y gestión de múltiples dispositivos
+- **MongoDB**: Base de datos para persistir sesiones y mensajes
+- **PM2**: Gestor de procesos Node.js
+- **vsftpd**: Servidor FTP para acceso remoto
+
+### Servidor:
+- **Proveedor**: Ionos VPS XL
+- **Especificaciones**: 4 vCores, 8GB RAM, 120GB SSD
+- **OS**: Ubuntu 24.04 LTS
+- **IP**: 82.223.205.101
+
+## Instalación y Configuración Inicial
+
+### Actualización del sistema:
+```bash
+apt update && apt upgrade -y
+apt install -y curl wget git nano htop unzip build-essential
+timedatectl set-timezone Europe/Madrid
+```
+
+### Instalación Node.js 20 LTS:
+```bash
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+apt install -y nodejs
+npm install -g npm@latest
+npm install -g pm2
+```
+
+### Configuración del sistema:
+```bash
+echo "fs.file-max = 65536" >> /etc/sysctl.conf
+echo "* soft nofile 65536" >> /etc/security/limits.conf
+echo "* hard nofile 65536" >> /etc/security/limits.conf
+sysctl -p
+```
+
+### Instalación MongoDB:
+```bash
+curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | \
+   sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
+
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+
+apt update
+apt install -y mongodb-org
+systemctl start mongod
+systemctl enable mongod
+```
+
+### Configuración del proyecto:
+```bash
+mkdir -p /opt/baileys-whatsapp
+cd /opt/baileys-whatsapp
+npm init -y
+npm install @whiskeysockets/baileys qrcode-terminal mongodb pino express qrcode axios
+mkdir -p sessions logs
+```
+
+## Gestión de Servicios PM2
+
+### Comandos principales:
+```bash
+# Iniciar servicios
+pm2 start simple-connect.js --name "whatsapp-simple"
+pm2 start dashboard.js --name "whatsapp-dashboard"
+
+# Gestión de servicios
+pm2 status                    # Ver estado de todos los servicios
+pm2 logs                      # Ver logs de todos los servicios
+pm2 logs whatsapp-simple      # Ver logs específicos
+pm2 logs --lines 50           # Ver últimas 50 líneas
+pm2 logs --lines 0            # Ver logs en tiempo real
+
+# Reiniciar servicios
+pm2 restart whatsapp-simple
+pm2 restart whatsapp-dashboard
+pm2 restart all
+
+# Parar servicios
+pm2 stop whatsapp-simple
+pm2 stop all
+
+# Eliminar servicios
+pm2 delete whatsapp-simple
+pm2 delete all
+
+# Guardar configuración
+pm2 save
+
+# Autostart en reinicio del servidor
+pm2 startup
+pm2 save
+```
+
+### Monitoreo:
+```bash
+pm2 monit                     # Monitor interactivo con CPU/RAM
+pm2 show whatsapp-simple      # Detalles específicos de un servicio
+```
+
+## URLs del Sistema
+
+### Aplicaciones:
+- **Conexión Simple**: http://82.223.205.101:3000
+- **Nueva Conexión Forzada**: http://82.223.205.101:3000/?new=true
+- **Dashboard**: http://82.223.205.101:3001
+- **Debug Simple**: http://82.223.205.101:3000/debug
+
+### API para envío de mensajes:
+```bash
+# Endpoint
+POST http://82.223.205.101:3001/api/send-message
+
+# Estructura JSON
+{
+  "telefono_origen": "34123456789",
+  "telefono_destino": "34987654321", 
+  "mensaje": "Texto del mensaje"
+}
+
+# Ejemplo cURL
+curl -X POST http://82.223.205.101:3001/api/send-message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "telefono_origen": "34123456789",
+    "telefono_destino": "34987654321",
+    "mensaje": "Hola desde la API"
+  }'
+```
+
+## Webhook de Recepción
+
+### URL configurada:
+```
+https://asistente.iagestion.com/whatsapp_webhook.php
+```
+
+### Estructura de datos enviados:
+```json
+{
+  "telefono_origen": "34123456789",
+  "telefono_destino": "34987654321",
+  "mensaje": "Texto del mensaje recibido"
+}
+```
+
+## Gestión de MongoDB
+
+### Comandos básicos:
+```bash
+# Conectar a MongoDB
+mongosh
+
+# Usar base de datos del proyecto
+use whatsapp_dashboard
+
+# Ver dispositivos conectados
+db.devices.find().pretty()
+
+# Ver mensajes recientes
+db.messages.find().sort({timestamp: -1}).limit(10).pretty()
+
+# Ver eventos del sistema
+db.events.find().sort({timestamp: -1}).limit(10).pretty()
+
+# Contar registros
+db.devices.countDocuments()
+db.messages.countDocuments()
+db.events.countDocuments()
+
+# Limpiar datos (si es necesario)
+db.devices.deleteMany({})
+db.messages.deleteMany({})
+db.events.deleteMany({})
+
+# Salir
+exit
+```
+
+## Configuración FTP
+
+### Credenciales:
+- **Host**: 82.223.205.101
+- **Puerto**: 21
+- **Usuario**: ftpbaileys
+- **Protocolo**: FTP
+
+### Configuración vsftpd (`/etc/vsftpd.conf`):
+```bash
+# Parámetros importantes habilitados:
+local_enable=YES
+write_enable=YES
+local_umask=022
+chroot_local_user=YES
+allow_writeable_chroot=YES
+pasv_enable=YES
+pasv_min_port=40000
+pasv_max_port=40100
+```
+
+### Gestión usuario FTP:
+```bash
+# Cambiar contraseña
+passwd ftpbaileys
+
+# Ver permisos
+ls -la /opt/baileys-whatsapp
+
+# Restaurar permisos si es necesario
+chown -R ftpbaileys:ftpbaileys /opt/baileys-whatsapp
+chmod 755 /opt/baileys-whatsapp
+```
+
+## Firewall y Puertos (Ionos)
+
+### Puertos abiertos necesarios:
+- **22** (TCP): SSH
+- **3000** (TCP): App Simple WhatsApp
+- **3001** (TCP): Dashboard
+- **21** (TCP): FTP Control
+- **40000-40100** (TCP): FTP Pasivo
+
+## Troubleshooting
+
+### Logs importantes:
+```bash
+# Logs de aplicaciones
+pm2 logs --lines 50
+
+# Logs del sistema
+tail -f /var/log/syslog
+
+# Logs de MongoDB
+tail -f /var/log/mongodb/mongod.log
+
+# Logs de FTP
+tail -f /var/log/vsftpd.log
+```
+
+### Problemas comunes:
+
+#### 1. Sesiones corruptas de WhatsApp:
+```bash
+pm2 stop whatsapp-simple
+rm -rf ./sessions/*
+pm2 start whatsapp-simple
+```
+
+#### 2. Base de datos con duplicados:
+```bash
+mongosh
+use whatsapp_dashboard
+db.devices.deleteMany({})
+exit
+```
+
+#### 3. Puertos ocupados:
+```bash
+netstat -tlnp | grep :3000
+netstat -tlnp | grep :3001
+# Matar proceso si es necesario: kill -9 [PID]
+```
+
+#### 4. Servicios no inician:
+```bash
+pm2 kill
+pm2 resurrect
+pm2 status
+```
+
+### Verificación del sistema:
+```bash
+# Estado de servicios
+systemctl status mongod
+systemctl status vsftpd
+pm2 status
+
+# Verificar conectividad
+curl http://localhost:3000
+curl http://localhost:3001
+
+# Verificar memoria y CPU
+htop
+df -h
+```
+
+## Mantenimiento
+
+### Limpieza periódica:
+```bash
+# Limpiar logs antiguos de PM2
+pm2 flush
+
+# Limpiar sesiones inactivas (automático cada hora)
+# Se ejecuta automáticamente en el código
+
+# Reiniciar servicios semanalmente
+pm2 restart all
+```
+
+### Backup:
+```bash
+# Backup de configuración
+cp /opt/baileys-whatsapp/*.js /backup/
+cp /etc/vsftpd.conf /backup/
+
+# Backup de base de datos
+mongodump --db whatsapp_dashboard --out /backup/mongodb/
+```
+
+### Actualizaciones:
+```bash
+# Actualizar dependencias Node.js
+cd /opt/baileys-whatsapp
+npm update
+
+# Actualizar sistema
+apt update && apt upgrade
+
+# Reiniciar servicios después de actualizaciones
+pm2 restart all
+```
+
+## Capacidad del Sistema
+
+### Límites actuales:
+- **Dispositivos WhatsApp simultáneos**: Hasta 200 (configuración servidor)
+- **Sesiones concurrentes**: Limitado por memoria RAM
+- **Mensajes por minuto**: Sin límite específico (depende de WhatsApp)
+
+### Escalabilidad:
+- Para más de 200 dispositivos: Considerar upgrade a VPS XXL (8 vCores, 16GB RAM)
+- Para alta disponibilidad: Implementar load balancer
+- Para mayor capacidad: Distribuir en múltiples servidores
+
+## Seguridad
+
+### Medidas implementadas:
+- FTP con usuario específico restringido
+- MongoDB sin acceso externo
+- Firewall configurado en Ionos
+- Acceso SSH solo con clave
+
+### Recomendaciones adicionales:
+- Cambiar puerto SSH por defecto
+- Implementar fail2ban
+- SSL/TLS para aplicaciones web
+- Backup automático de datos críticos

@@ -1,0 +1,32 @@
+{
+  "name": "baileys-whatsapp",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node simple-connect.js",
+    "dev": "nodemon --watch . --ext js,html,json --exec \"node simple-connect.js\"",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "devDependencies": {
+    "nodemon": "^2.0.22"
+  },
+  "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "^6.6.0",
+    "axios": "^1.11.0",
+    "baileys": "^6.7.8",
+    "crypto": "^1.0.1",
+    "express": "^5.1.0",
+    "link-preview-js": "^3.1.0",
+    "mongodb": "^6.19.0",
+    "open-graph-scraper": "^6.10.0",
+    "pino": "^9.9.1",
+    "qrcode": "^1.5.4",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

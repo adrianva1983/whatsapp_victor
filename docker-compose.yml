@@ -1,0 +1,108 @@
+version: '3.8'
+
+services:
+  # Base de datos MongoDB
+  mongodb:
+    image: mongo:7.0
+    container_name: whatsapp_mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_DATABASE: whatsapp_dashboard
+    volumes:
+      - mongodb_data:/data/db
+      - ./mongo-init:/docker-entrypoint-initdb.d
+    ports:
+      - "27017:27017"
+    networks:
+      - whatsapp_network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/whatsapp_dashboard --quiet
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Aplicación principal WhatsApp
+  whatsapp-app:
+    build: .
+    container_name: whatsapp_app
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=development
+      - MONGODB_URL=mongodb://mongodb:27017/whatsapp_dashboard
+      - DISABLE_AUTH=true
+      - SKIP_USER_VERIFICATION=true
+      - DASHBOARD_URL=http://whatsapp-dashboard:3001
+      - REFRESH_MS_WAITING_SCAN=100000
+      - REFRESH_MS_DEFAULT=100000
+      - WEBHOOK_URL=http://webhook/api/whatsapp_node_webhook.php
+      - CHAT_API_KEY=mi_api_key_secreto_y_larga
+      - CHAT_GESTOR_API_URL=https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Gestor
+      - CHAT_SENDER_API_URL=https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Sender
+    volumes:
+      - ./:/usr/src/app
+      - ./node_modules:/usr/src/app/node_modules
+      - ./sessions:/usr/src/app/sessions
+      - ./logs:/usr/src/app/logs
+      - ./multimedia:/usr/src/app/multimedia
+    working_dir: /usr/src/app
+    ports:
+      - "3000:3000"
+    networks:
+      - whatsapp_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: ["npm", "run", "dev"]
+
+  # Dashboard de monitoreo
+  whatsapp-dashboard:
+    build: .
+    container_name: whatsapp_dashboard
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    environment:
+      - NODE_ENV=production
+      - MONGODB_URL=mongodb://mongodb:27017/whatsapp_dashboard
+      - DASHBOARD_URL=http://whatsapp-dashboard:3001
+    ports:
+      - "3001:3001"
+    networks:
+      - whatsapp_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    command: ["node", "dashboard.js"]
+
+  # Servicio local para recibir webhooks (Apache + PHP)
+  webhook:
+    image: php:8.2-apache
+    container_name: whatsapp_webhook
+    restart: unless-stopped
+    volumes:
+      - ./webhook:/var/www/html:rw
+    ports:
+      - "8081:80"
+    networks:
+      - whatsapp_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/ || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  mongodb_data:
+    driver: local
+
+networks:
+  whatsapp_network:
+    driver: bridge

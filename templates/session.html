@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WhatsApp - {{SESSION_ID}}</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="stylesheet" href="/static/css/index.css">
+    <script>
+        // Mantener sesión al hacer refresh
+        setTimeout(() => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const hash = urlParams.get('hash');
+            const date = urlParams.get('date');
+            window.location.href = '/?session={{SESSION_ID}}' + (hash && date ? '&hash=' + hash + '&date=' + date : '');
+        }, Number('{{REFRESH_MS}}'));
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div style="display: flex; align-items: center; justify-content: center; margin-bottom: 20px; gap: 15px;">
+            <div style="font-size: 3em; color: #25D366;">
+                <i class="fab fa-whatsapp"></i>
+            </div>
+            <div style="font-size: 2em; color: #667eea; animation: pulse 2s infinite;">
+                ↔
+            </div>
+            <div style="height:50px;overflow:hidden">
+                <img style="height:100%;margin-top:0px;" src="/static/img/hipotea.png">
+            </div>
+        </div>
+
+        <!-- QR block -->
+        {{#IF_QR}}
+        <div>
+            <h3 style="margin-bottom: 15px;">📲 Escanea con tu WhatsApp</h3>
+            <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap; justify-content: center;">
+                <div style="flex-shrink: 0;">
+                    <img src="{{QR_IMAGE}}" alt="QR Code" class="qr-image">
+                </div>
+                <div style="background: #edf2f7; padding: 20px; border-radius: 8px; text-align: left; line-height: 1.6; flex: 1; min-width: 250px;">
+                    <strong>Pasos:</strong><br>
+                    1️⃣ Abre WhatsApp en tu teléfono<br>
+                    2️⃣ Ve a ⚙️ Configuración<br>
+                    3️⃣ Toca 📱 Dispositivos conectados<br>
+                    4️⃣ Toca + Conectar dispositivo<br>
+                    5️⃣ Escanea este código QR
+                </div>
+            </div>
+        </div>
+        {{#END_IF_QR}}
+
+        <!-- Connected block -->
+        {{#IF_CONNECTED}}
+        <div style="background: #c6f6d5; padding: 20px; border-radius: 12px; margin: 20px 0; color: #22543d;">
+            <div style="font-size: 1.5em; margin-bottom: 10px;">✅</div>
+            <h3>¡WhatsApp Conectado!</h3>
+            <p>Tu dispositivo está funcionando correctamente.</p>
+            {{#IF_DEVICE_NUMBER}}<p><strong>Número: +{{DEVICE_NUMBER}}</strong></p>{{#END_IF_DEVICE_NUMBER}}
+        </div>
+        {{#END_IF_CONNECTED}}
+
+        <!-- Unauthorized block -->
+        {{#IF_UNAUTHORIZED}}
+        <div style="background: #fed7d7; padding: 15px; border-radius: 8px; margin: 15px 0; color: #742a2a;">
+            <h3>🚫 No Autorizado</h3>
+            <p>Este número de teléfono no está registrado en el sistema.</p>
+            <p><strong>Número: {{DEVICE_NUMBER}}</strong></p>
+            <a href="/?new=true" class="button" style="margin-top: 15px;">🔄 Intentar otro número</a>
+        </div>
+        {{#END_IF_UNAUTHORIZED}}
+
+        <!-- Error block -->
+        {{#IF_ERROR}}
+        <div style="background: #fed7d7; padding: 15px; border-radius: 8px; margin: 15px 0; color: #742a2a;">
+            <h3>⚠️ Error</h3>
+            <p>{{ERROR_TEXT}}</p>
+            <a href="/?new=true" class="button" style="margin-top: 15px;">🔄 Reintentar</a>
+        </div>
+        {{#END_IF_ERROR}}
+
+        <!-- Loading / default block -->
+        {{#IF_DEFAULT}}
+        <div style="padding: 30px;">
+            <div class="loading"></div>
+            <p style="margin-top: 15px; color: #4a5568;">
+                {{LOADING_TEXT}}
+            </p>
+            <p style="margin-top: 10px; font-size: 14px; color: #718096;">
+                Estado: <strong>{{STATUS_TEXT}}</strong><br>
+                QR: <strong>{{QR_STATUS}}</strong>
+            </p>
+        </div>
+        {{#END_IF_DEFAULT}}
+
+        <div class="status-badge {{STATUS_CLASS}}">{{STATUS_BADGE}}</div>
+        
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #e2e8f0;">
+            <a href="/?new=true" class="button">🆕 Nueva Conexión</a>
+        </div>
+
+        <div style="background: #edf2f7; padding: 8px 16px; border-radius: 20px; font-size: 12px; color: #4a5568; margin-bottom: 20px; font-family: monospace;">{{SESSION_ID}}</div>
+    </div>
+</body>
+</html>

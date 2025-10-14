@@ -1,0 +1,42 @@
+# Node
+node_modules/
+npm-debug.log
+yarn.lock
+package-lock.json
+
+# Sessions and local data
+sessions/
+webhook/logs/
+logs/
+*.log
+
+# Environment
+.env
+.env.local
+
+# Media and uploads
+multimedia/
+uploads/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# PHP
+vendor/
+composer.lock
+
+# Other
+sessions/**
+public/uploads/
+
+# Docker
+.env.docker
+
+# Ignore credentials in sessions folder
+sessions/**/creds.json
+
+# Keep README and config
+!README.md

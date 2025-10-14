@@ -1,0 +1,50 @@
+# Archivos de Node.js
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Archivos de sesiones locales (se montan como volumen)
+sessions/*
+logs/*
+multimedia/*
+
+# Archivos de desarrollo
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db
+
+# Archivos de IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Archivos de Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Archivos de Git
+.git
+.gitignore
+
+# Archivos temporales
+*.tmp
+*.temp
+*.log
+
+# Archivos de backup
+*.bak
+*.backup
+
+# Documentación que no es necesaria en la imagen
+README.md
+CHANGELOG.md
+*.md
