@@ -15,17 +15,16 @@ require $path.'include/vendor/autoload.php';
 use Aws\S3\S3Client;
 use Aws\Exception\AwsException;*/
 
-/*
- * Las credenciales sensibles (AWS, API keys, etc.) NO deben estar en el código.
- * Guarda estas variables en el entorno (por ejemplo, .env) y accede mediante getenv('AWS_KEY')
- * Placeholder a continuación para identificar dónde configurar las credenciales.
- */
+
 $bucket_name = getenv('AWS_BUCKET') ?: 'gestioninmoficheros_placeholder';
 $aws_access_key_id = getenv('AWS_ACCESS_KEY_ID') ?: 'AWS_ACCESS_KEY_ID_PLACEHOLDER';
 $aws_secret_access_key = getenv('AWS_SECRET_ACCESS_KEY') ?: 'AWS_SECRET_ACCESS_KEY_PLACEHOLDER';
 
 $llm_plataforma = "gemini"; // Opciones: "gemini", "openai", "anthropic"
 $llm_modelo = "gemini-2.5-flash-lite"; // Modelo específico
+
+// Leer API key de Gemini (Google AI Studio) desde entorno si no está definida
+$google_ai_studio_api_key = getenv('GOOGLE_AI_STUDIO_API_KEY') ?: ($google_ai_studio_api_key ?? null);
 
 // EJEMPLOS DE OTRAS CONFIGURACIONES:
 // $llm_plataforma = "openai"; $llm_modelo = "gpt-4o-mini"; // Rápido y económico
@@ -68,10 +67,173 @@ function generarHashWhatsapp($fecha) {}
 // Función para generar parámetros de autenticación
 function obtenerParametrosAuth() {}
 // Función principal para llamar a cualquier LLM
-function llamar_llm_api($mensaje, $contexto_conversacion = '', $plataforma = null, $modelo = null, $system_prompt = '') {}
+function llamar_llm_api($mensaje, $contexto_conversacion = '', $plataforma = null, $modelo = null, $system_prompt = '') 
+{
+    global $llm_plataforma, $llm_modelo;
+    
+    // Usar configuración por defecto si no se especifica
+    if (!$plataforma) $plataforma = $llm_plataforma;
+    if (!$modelo) $modelo = $llm_modelo;
+    
+    error_log("🤖 [LLM] Usando: $plataforma - $modelo");
+    
+    switch ($plataforma) {
+        case 'gemini':
+            return llamar_gemini_api($mensaje, $contexto_conversacion, $modelo, $system_prompt);
+        case 'openai':
+            return llamar_openai_api($mensaje, $contexto_conversacion, $modelo, $system_prompt);
+        case 'anthropic':
+            return llamar_anthropic_api($mensaje, $contexto_conversacion, $modelo, $system_prompt);
+        default:
+            error_log("🤖 [LLM] Plataforma no soportada: $plataforma");
+            return null;
+    }
+}
 
-// Función para google gemini
-function llamar_gemini_api($mensaje, $contexto_conversacion = '', $modelo = 'gemini-pro', $system_prompt = '') {}
+// Función para google gemini (v1beta generateContent con contents[])
+function llamar_gemini_api($mensaje, $contexto_conversacion = '', $modelo = 'gemini-2.0-flash', $system_prompt = '') {
+    global $google_ai_studio_api_key;
+
+    if (empty($google_ai_studio_api_key)) {
+        error_log("🤖 [Gemini] API key no configurada");
+        return null;
+    }
+
+    // 1) Construir el prompt de usuario (si no hay system_prompt, usa tu helper)
+    $prompt_usuario = !empty($system_prompt)
+        ? ($system_prompt . "\n\nCliente: " . (string)$mensaje . "\n\nContexto:\n" . (string)$contexto_conversacion)
+        : construir_prompt_inmobiliaria($mensaje, $contexto_conversacion);
+
+    // 2) Construir payload con el formato correcto para v1beta
+    //    - contents: array de mensajes (aquí solo 1 del usuario)
+    //    - generationConfig: parámetros de sampling/límites
+    $payload = [
+        'contents' => [[
+            'role'  => 'user',
+            'parts' => [
+                ['text' => $prompt_usuario]
+            ]
+        ]],
+        'generationConfig' => [
+            'temperature'     => 0.7,   // tus valores originales
+            'maxOutputTokens' => 800,
+            'topP'            => 0.95,
+            'topK'            => 40
+        ]
+        // 'safetySettings' => [...] // opcional
+    ];
+
+    // Si quieres pasar un "system prompt" separado (mejor práctica), usa systemInstruction.
+    // Lo añadimos SOLO si el caller lo envió (ya está inyectado en $prompt_usuario, pero esto lo explicita).
+    if (!empty($system_prompt)) {
+        $payload['systemInstruction'] = [
+            'role'  => 'system',
+            'parts' => [
+                ['text' => $system_prompt]
+            ]
+        ];
+    }
+
+    // 3) Endpoint correcto
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/" . urlencode($modelo) . ":generateContent?key=" . urlencode($google_ai_studio_api_key);
+
+    $headers = [
+        "Content-Type: application/json",
+        "User-Agent: IAGestion-WhatsApp/1.0"
+    ];
+
+    // 4) Reintentos (como ya tenías)
+    $maxRetries = 2;
+    $attempt = 0;
+    $response = null;
+    while ($attempt <= $maxRetries) {
+        $attempt++;
+        // IMPORTANTE: $data debe ser el $payload con contents[], no con 'prompt'
+        $response = hacer_peticion_http($url, $payload, $headers, 30);
+        if ($response) break;
+        error_log("🤖 [Gemini] Intento $attempt fallido, reintentando...");
+        sleep(1);
+    }
+
+    if (!$response) {
+        error_log("🤖 [Gemini] No se obtuvo respuesta después de $attempt intentos");
+        return null;
+    }
+
+    // 5) Parseo robusto de la respuesta
+    $result = json_decode($response, true);
+    if ($result === null) {
+        error_log("🤖 [Gemini] JSON no válido en respuesta: " . substr($response, 0, 500));
+        return null;
+    }
+
+    // a) Respuesta estándar v1beta: candidates[].content.parts[].text
+    if (isset($result['candidates']) && is_array($result['candidates'])) {
+        foreach ($result['candidates'] as $cand) {
+            if (isset($cand['content']['parts']) && is_array($cand['content']['parts'])) {
+                foreach ($cand['content']['parts'] as $part) {
+                    if (isset($part['text'])) {
+                        $text = trim($part['text']);
+                        return limitar_respuesta_llm($text);
+                    }
+                }
+            }
+        }
+    }
+
+    // b) Otras variantes defensivas que a veces aparecen
+    if (isset($result['output']) && is_array($result['output'])) {
+        foreach ($result['output'] as $out) {
+            if (isset($out['content']) && is_array($out['content'])) {
+                foreach ($out['content'] as $c) {
+                    if (isset($c['text'])) {
+                        $text = trim($c['text']);
+                        return limitar_respuesta_llm($text);
+                    }
+                }
+            }
+        }
+    }
+
+    if (isset($result['outputText'])) {
+        return limitar_respuesta_llm(trim($result['outputText']));
+    }
+    if (isset($result['text'])) {
+        return limitar_respuesta_llm(trim($result['text']));
+    }
+
+    // c) Log de error útil (si viene objeto error)
+    if (isset($result['error'])) {
+        $msg = $result['error']['message'] ?? 'Error desconocido';
+        $code = $result['error']['code'] ?? 'N/A';
+        error_log("🤖 [Gemini] API error ($code): $msg");
+    } else {
+        error_log("🤖 [Gemini] Respuesta inesperada: " . substr(json_encode($result), 0, 1000));
+    }
+
+    return null;
+}
+
+
+// Limitar la longitud de la respuesta para evitar mensajes excesivamente largos
+function limitar_respuesta_llm($texto, $max_chars = 1600) {
+    $texto = trim($texto);
+    if (mb_strlen($texto) > $max_chars) {
+        // Intentar truncar por oraciones si es posible
+        $sentences = preg_split('/(?<=[.!?])\s+/', $texto);
+        $out = '';
+        foreach ($sentences as $s) {
+            if (mb_strlen($out . ' ' . $s) > $max_chars) break;
+            $out .= ($out === '' ? '' : ' ') . $s;
+        }
+        if (trim($out) === '') {
+            // Fallback: truncar simple
+            return mb_substr($texto, 0, $max_chars) . '...';
+        }
+        return trim($out) . '...';
+    }
+    return $texto;
+}
 
 // Función para OpenAI
 function llamar_openai_api($mensaje, $contexto_conversacion = '', $modelo = 'gpt-3.5-turbo', $system_prompt = '') {}
@@ -81,7 +243,49 @@ function llamar_anthropic_api($mensaje, $contexto_conversacion = '', $modelo = '
 function construir_contexto_cliente($db, $id_cliente, $id_agencia) {}
 
 // Función auxiliar para el system promt
-function construir_prompt_inmobiliaria($mensaje, $contexto_conversacion = '', $nombre_agente = 'María', $nombre_cliente = '') {}
+function construir_prompt_inmobiliaria($mensaje, $contexto_conversacion = '', $nombre_agente = 'María', $nombre_cliente = '') {
+    // Normalizar nombres
+    $nombre_agente = trim($nombre_agente ?: 'Asesor');
+    $nombre_cliente = trim($nombre_cliente ?: 'Estimado/a cliente');
+
+    $prompt = "Eres $nombre_agente, un/a asesor/a especializado/a en hipotecas que trabaja dentro de un CRM hipotecario en España. " .
+              "Tu objetivo principal es ayudar a los clientes con consultas sobre hipotecas (simulaciones, requisitos, documentación), además de orientar en compra/venta y alquiler cuando proceda." . "\n\n";
+
+    // Instrucciones de comportamiento
+    $prompt .= "INSTRUCCIONES:\n";
+    $prompt .= "- Responde siempre en español (España), con un tono profesional pero cercano.\n";
+    $prompt .= "- Mantén las respuestas concisas y útiles (máximo ~120 palabras), salvo que el contexto requiera más detalle.\n";
+    $prompt .= "- Si falta información relevante para dar una respuesta precisa, pide los datos clave (ej.: importe solicitado, plazo en años, ingresos netos, tipo de contrato, gastos mensuales).\n";
+    $prompt .= "- NO inventes datos (precios exactos, disponibilidad, condiciones concretas). Si no conoces algo, indica que es orientativo y ofrece buscar o agendar una cita.\n";
+    $prompt .= "- Para consultas complejas o que requieran documentación, explica brevemente qué documentos se necesitan (DNI, nóminas, vida laboral, declaración de la renta, modelos para autónomos) y sugiere agendar una cita o pedir que envíen la documentación.\n";
+    $prompt .= "- Evita tecnicismos excesivos; cuando uses términos técnicos, explícalos brevemente.\n\n";
+
+    // Información del cliente (si existe)
+    if (!empty($nombre_cliente) && strtolower($nombre_cliente) !== 'estimado/a cliente' && strtolower($nombre_cliente) !== 'estimado/a cliente') {
+        $prompt .= "ATENCIÓN AL CLIENTE: El cliente se llama $nombre_cliente.\n";
+    }
+
+    // Recordatorio: privacidad y captura de lead
+    $prompt .= "NOTA: Eres parte de un CRM hipotecario; cuando sea apropiado, captura el interés del cliente con un CTA para agendar llamada/visita y recuerda que los datos sensibles deben manejarse con privacidad.\n\n";
+
+    // Contexto previo si se proporciona
+    if (!empty($contexto_conversacion)) {
+        $prompt .= "CONTEXTO PREVIO:\n" . trim($contexto_conversacion) . "\n\n";
+    }
+
+    // Pregunta/consulta actual
+    $prompt .= "CONSULTA ACTUAL:\n" . trim($mensaje) . "\n\n";
+
+    // Ejemplo de formato de respuesta esperado para guiar al modelo
+    $prompt .= "FORMATO ESPERADO:\n";
+    $prompt .= "- Inicio breve y saludo opcional (ej.: Hola María, gracias por tu mensaje.).\n";
+    $prompt .= "- Respuesta clara y accionable (si procede, pasos a seguir).\n";
+    $prompt .= "- Cierre con CTA si aplica (ej.: ¿Te interesa que te reserve una cita?).\n\n";
+
+    $prompt .= "Responde como $nombre_agente de forma útil, profesional y empática:";
+
+    return $prompt;
+}
 
 // Función para detectar intención del mensaje en contexto hipotecario
 function detectar_intencion_mensaje($mensaje) {
@@ -211,7 +415,52 @@ function obtener_respuesta_rapida($intencion, $nombre_agente = 'Asesor', $nombre
 function debe_responder_automaticamente($ultimo_mensaje, $contexto_mensajes) {}
 
 // Función auxiliar para hacer peticiones http
-function hacer_peticion_http($url, $data, $headers, $timeout = 30) {}
+function hacer_peticion_http($url, $data, $headers, $timeout = 30) {
+    // Preparar opciones de stream
+    $headerStr = implode("\r\n", $headers);
+    $options = [
+        'http' => [
+            'header' => $headerStr,
+            'method' => 'POST',
+            'content' => json_encode($data),
+            'timeout' => $timeout
+        ]
+    ];
+
+    $context = stream_context_create($options);
+    $response = @file_get_contents($url, false, $context);
+
+    // Preparar archivo de log local para diagnóstico adicional
+    $logDir = __DIR__ . '/../logs';
+    if (!file_exists($logDir)) {
+        @mkdir($logDir, 0755, true);
+    }
+    $logFile = $logDir . '/webhook_' . date('Ymd') . '.log';
+
+    // Capturar cabeceras de respuesta HTTP si existen
+    $httpHeaders = isset($http_response_header) ? $http_response_header : null;
+
+    if ($response === FALSE) {
+        $error = error_get_last();
+        $entry = date('Y-m-d\TH:i:sP') . " - 🤖 [HTTP] Error en peticion a $url\n";
+        $entry .= "Request headers: " . str_replace("\n", " ", $headerStr) . "\n";
+        $entry .= "Error: " . ($error['message'] ?? 'Unknown error') . "\n";
+        $entry .= "HTTP response headers: " . print_r($httpHeaders, true) . "\n";
+        file_put_contents($logFile, $entry, FILE_APPEND);
+        return null;
+    }
+
+    // Log de respuesta para diagnóstico (guardar fragmento)
+    $statusLine = is_array($httpHeaders) && count($httpHeaders) > 0 ? $httpHeaders[0] : 'NO_STATUS_LINE';
+    $entry = date('Y-m-d\TH:i:sP') . " - 🔄 [HTTP] Request to $url\n";
+    $entry .= "Request headers: " . str_replace("\n", " ", $headerStr) . "\n";
+    $entry .= "Status: " . $statusLine . "\n";
+    $entry .= "Response headers: " . print_r($httpHeaders, true) . "\n";
+    $entry .= "Response body (trimmed): " . substr($response, 0, 2000) . "\n";
+    file_put_contents($logFile, $entry, FILE_APPEND);
+
+    return $response;
+}
 
 // Función para enviar mensaje WhatsApp via API
 function enviarMensajeWhatsApp($telefono_origen, $telefono_destino, $mensaje) 
@@ -533,8 +782,28 @@ try {
                 }  
                 else
                 {
-                    $replyText = "Recibido: " . (substr($conversacion['mensajes'][0]['contenido'], 0, 200));
-                    $mensaje_enviado = enviarMensajeWhatsApp($conversacion['telefono_gestor'], $conversacion['telefono_cliente'], $replyText);
+                    $logDebug = "🤖 [Piloto Automático] Usando IA para generar respuesta personalizada" . "\n";
+                    file_put_contents($logFile, $logDebug, FILE_APPEND);
+
+                    // Llamar al LLM usando el texto del mensaje recibido
+                    $respuesta_ia = llamar_llm_api($texto_mensaje, '', null, null, '');
+
+                    // Registrar la respuesta cruda del LLM para diagnóstico
+                    $logDebug = "🔍 DEBUG - Raw LLM respuesta: " . var_export($respuesta_ia, true) . "\n";
+                    file_put_contents($logFile, $logDebug, FILE_APPEND);
+
+                    if (empty($respuesta_ia)) {
+                        $key_present = getenv('GOOGLE_AI_STUDIO_API_KEY') ? 'YES' : 'NO';
+                        $logDebug = "⚠️ DEBUG - LLM devolvió NULL o vacío. Comprueba la clave GOOGLE_AI_STUDIO_API_KEY en el contenedor (presente=$key_present) y la conectividad a la API.\n";
+                        file_put_contents($logFile, $logDebug, FILE_APPEND);
+                    } else {
+                        $logDebug = "🔍 DEBUG - Mensaje IA generado: " . substr($respuesta_ia, 0, 200) . "\n";
+                        file_put_contents($logFile, $logDebug, FILE_APPEND);
+                        // Enviar la respuesta generada por IA
+                        $mensaje_enviado = enviarMensajeWhatsApp($conversacion['telefono_gestor'], $conversacion['telefono_cliente'], $respuesta_ia);
+                        $logDebug = "🔍 DEBUG - Resultado envio IA: " . ($mensaje_enviado ? 'SUCCESS' : 'FAILED') . "\n";
+                        file_put_contents($logFile, $logDebug, FILE_APPEND);
+                    }
                 }
             }
 

@@ -95,6 +95,9 @@ services:
       - ./webhook:/var/www/html:rw
     ports:
       - "8081:80"
+    environment:
+      # Define la clave de API para Google AI Studio (Gemini). Configure en un .env o en el entorno del sistema.
+      - GOOGLE_AI_STUDIO_API_KEY=${GOOGLE_AI_STUDIO_API_KEY}
     networks:
       - whatsapp_network
     healthcheck:
