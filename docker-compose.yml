@@ -30,17 +30,21 @@ services:
       mongodb:
         condition: service_healthy
     environment:
-      - NODE_ENV=development
-      - MONGODB_URL=mongodb://mongodb:27017/whatsapp_dashboard
-      - DISABLE_AUTH=true
-      - SKIP_USER_VERIFICATION=true
-      - DASHBOARD_URL=http://whatsapp-dashboard:3001
-      - REFRESH_MS_WAITING_SCAN=100000
-      - REFRESH_MS_DEFAULT=100000
-      - WEBHOOK_URL=http://webhook/api/whatsapp_node_webhook.php
-      - CHAT_API_KEY=mi_api_key_secreto_y_larga
-      - CHAT_GESTOR_API_URL=https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Gestor
-      - CHAT_SENDER_API_URL=https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Sender
+      NODE_ENV: development
+      MONGODB_URL: "mongodb://mongodb:27017/whatsapp_dashboard"
+      DISABLE_AUTH: "true"
+      SKIP_USER_VERIFICATION: "false"
+      DASHBOARD_URL: "http://whatsapp-dashboard:3001"
+      REFRESH_MS_WAITING_SCAN: "100000"
+      REFRESH_MS_DEFAULT: "100000"
+      WEBHOOK_URL: "http://webhook/api/whatsapp_node_webhook.php"
+      CHAT_API_KEY: "mi_api_key_secreto_y_larga"
+      CHAT_GESTOR_API_URL: "https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Gestor"
+      CHAT_SENDER_API_URL: "https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Sender"
+      # Timeout para la llamada al API Sender (ms). Postman mostró ~10s, subir a 15s para evitar ECONNABORTED
+      CHAT_SENDER_TIMEOUT_MS: "15000"
+      # Reintentos para el API Sender
+      CHAT_SENDER_MAX_RETRIES: "3"
     volumes:
       - ./:/usr/src/app
       - ./node_modules:/usr/src/app/node_modules

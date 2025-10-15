@@ -199,8 +199,8 @@ function obtener_respuesta_rapida($intencion, $nombre_agente = 'Asesor', $nombre
         case 'amortizacion':
             return "$saludo, puedes amortizar anticipadamente tu hipoteca de forma total o parcial. Hay que revisar las comisiones que tenga tu hipoteca actual. ¿Quieres que revisemos tus condiciones y calculemos si te compensa?";
             
-        case 'consulta_general':
-            return "$saludo, estoy aquí para ayudarte con cualquier duda sobre hipotecas y financiación. ¿Podrías contarme un poco más sobre lo que necesitas?";
+        /*case 'consulta_general':
+            return "$saludo, estoy aquí para ayudarte con cualquier duda sobre hipotecas y financiación. ¿Podrías contarme un poco más sobre lo que necesitas?";*/
             
         default:
             return null; // Usar IA para respuestas más complejas
@@ -465,6 +465,28 @@ try {
         $logDebug = "🔍 DEBUG - Conversacion: $clave, Direccion: " . ($conversacion['direccion'] ?? 'N/A') . "\n";
         file_put_contents($logFile, $logDebug, FILE_APPEND);
         
+        // Si el payload ya incluye usuario_vinculado, úsalo como gestor (evita llamadas externas)
+        $usuario_gestor = null;
+        $telefono_gestor = $conversacion['telefono_gestor'] ?? '';
+        $telefono_cliente = $conversacion['telefono_cliente'] ?? '';
+        $piloto_automatico = false;
+        if (!empty($conversacion['usuario_vinculado'])) {
+            $usuario_gestor = $conversacion['usuario_vinculado'];
+            // Establecer piloto_automatico si viene en el payload
+            if (isset($usuario_gestor['piloto_automatico'])) {
+                $piloto_automatico = (bool)$usuario_gestor['piloto_automatico'];
+            } elseif (isset($usuario_gestor['PilotoAutomatico'])) {
+                $piloto_automatico = ($usuario_gestor['PilotoAutomatico'] == 1 || $usuario_gestor['PilotoAutomatico'] === true);
+            }
+            $logDebug = "🔍 DEBUG - Usuario gestor obtenido del payload: " . json_encode(array_slice((array)$usuario_gestor,0,5)) . "\n";
+            file_put_contents($logFile, $logDebug, FILE_APPEND);
+        } else {
+            // Fallback: si no viene en el payload, aquí podríamos llamar a buscar_usuario_por_telefono()
+            $logDebug = "🔍 DEBUG - No se proporcionó usuario_vinculado en payload, fallback a buscar_usuario_por_telefono()\n";
+            file_put_contents($logFile, $logDebug, FILE_APPEND);
+            // $usuario_gestor = buscar_usuario_por_telefono($db, $telefono_gestor);
+        }
+        
         // Solo responder si es un mensaje RECIBIDO (entrante)
         if ($conversacion['direccion'] === 'recibido') 
         {
@@ -487,28 +509,34 @@ try {
             $logDebug = "🔍 DEBUG - Nombres: Cliente=$nombre_cliente, Gestor=$nombre_gestor\n";
             file_put_contents($logFile, $logDebug, FILE_APPEND);
             
-            // Detectar intención y obtener respuesta
-            $intencion = detectar_intencion_mensaje($texto_mensaje);
-            $respuesta_ia = obtener_respuesta_rapida($intencion, $nombre_gestor, $nombre_cliente);
-
-            $logDebug = "🔍 DEBUG - Intencion: $intencion, Respuesta IA: " . ($respuesta_ia ? substr($respuesta_ia, 0, 50) : 'NULL') . "\n";
-            file_put_contents($logFile, $logDebug, FILE_APPEND);
-
-            if ($respuesta_ia)
-            {
-                $logDebug = "🔍 DEBUG - Enviando respuesta IA de {$conversacion['telefono_gestor']} a {$conversacion['telefono_cliente']}\n";
+            // Solo proceder con respuestas automáticas si el gestor tiene piloto_automatico activado
+            if (!$piloto_automatico) {
+                $logDebug = "🔍 DEBUG - piloto_automatico DESACTIVADO para gestor={$nombre_gestor} ({$telefono_gestor}) - no se enviará respuesta automática\n";
                 file_put_contents($logFile, $logDebug, FILE_APPEND);
-                
-                $mensaje_enviado = enviarMensajeWhatsApp($conversacion['telefono_gestor'], $conversacion['telefono_cliente'], $respuesta_ia);
-                
-                $logDebug = "🔍 DEBUG - Resultado envio: " . ($mensaje_enviado ? 'SUCCESS' : 'FAILED') . "\n";
+            } else {
+                // Detectar intención y obtener respuesta
+                $intencion = detectar_intencion_mensaje($texto_mensaje);
+                $respuesta_ia = obtener_respuesta_rapida($intencion, $nombre_gestor, $nombre_cliente);
+
+                $logDebug = "🔍 DEBUG - Intencion: $intencion, Respuesta IA: " . ($respuesta_ia ? substr($respuesta_ia, 0, 50) : 'NULL') . "\n";
                 file_put_contents($logFile, $logDebug, FILE_APPEND);
-            }  
-            else
-            {
-                $replyText = "Recibido: " . (substr($conversacion['mensajes'][0]['contenido'], 0, 200));
-                $mensaje_enviado = enviarMensajeWhatsApp($conversacion['telefono_gestor'], $conversacion['telefono_cliente'], $replyText);
-            }      
+
+                if ($respuesta_ia)
+                {
+                    $logDebug = "🔍 DEBUG - Enviando respuesta IA de {$conversacion['telefono_gestor']} a {$conversacion['telefono_cliente']}\n";
+                    file_put_contents($logFile, $logDebug, FILE_APPEND);
+                    
+                    $mensaje_enviado = enviarMensajeWhatsApp($conversacion['telefono_gestor'], $conversacion['telefono_cliente'], $respuesta_ia);
+                    
+                    $logDebug = "🔍 DEBUG - Resultado envio: " . ($mensaje_enviado ? 'SUCCESS' : 'FAILED') . "\n";
+                    file_put_contents($logFile, $logDebug, FILE_APPEND);
+                }  
+                else
+                {
+                    $replyText = "Recibido: " . (substr($conversacion['mensajes'][0]['contenido'], 0, 200));
+                    $mensaje_enviado = enviarMensajeWhatsApp($conversacion['telefono_gestor'], $conversacion['telefono_cliente'], $replyText);
+                }
+            }
 
             
             // Opcional: descomentar para debugging

@@ -372,13 +372,13 @@ async function verificarYRegistrarUsuario(sessionId, deviceNumber) {
         const virtualUser = {
             IdGestor: 0,
             IdAgencia: 0,
-            Nombre: 'DEV',
-            Apellidos: 'USER',
+            Nombre: 'Alex',
+            Apellidos: 'Chat_bot',
             SyncConversaciones: 1,
             AutomatizacionesWhatsapp: 0,
             CrucesAutomaticos: 0,
             CrucesAutomaticosRGPDExterna: 0,
-            PilotoAutomatico: 0,
+            PilotoAutomatico: 1,
             RecordatoriosVisitas: 0
         }
         USER_LOOKUP_CACHE.set(cacheKey, { data: virtualUser, expiresAt: now + CACHE_TTL_MS })
@@ -451,62 +451,97 @@ async function verificarYRegistrarUsuario(sessionId, deviceNumber) {
             // Usuario válido, registrar/actualizar en WhatsappSenders
             const currentVersion = 5 // Tu versión actual
 
-            // En lugar de ejecutar INSERT SQL local, llamar a la API Sender
-            const senderApiUrl = process.env.CHAT_SENDER_API_URL || 'https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Sender'
-
-            const payload = {
-                IdAgencia: userData.IdAgencia || 0,
-                IdGestor: userData.IdGestor || 0,
-                Telefono: deviceNumber,
-                Version: currentVersion,
-                SyncConversaciones: userData.SyncConversaciones || 0,
-                AutomatizacionesWhatsapp: userData.AutomatizacionesWhatsapp || 0,
-                CrucesAutomaticos: userData.CrucesAutomaticos || 0,
-                CrucesAutomaticosRGPDExterna: userData.CrucesAutomaticosRGPDExterna || 0,
-                PilotoAutomatico: userData.PilotoAutomatico || 0,
-                RecordatoriosVisitas: userData.RecordatoriosVisitas || 0
-            }
-
+            // En lugar de llamar siempre a la API Sender, comprobar primero si el teléfono
+            // ya está vinculado en la tabla WhatsappSenders. Solo llamar al servicio remoto
+            // cuando se trate de un nuevo vínculo.
             let registrationSuccess = false
             try {
-                const headers = { 'Content-Type': 'application/json' }
-                if (process.env.CHAT_API_KEY) headers['x-api-key'] = process.env.CHAT_API_KEY
+                let senderExists = false
+                try {
+                    const checkQuery = `SELECT COUNT(*) AS cnt FROM WhatsappSenders WHERE Telefono = '${deviceNumber}' LIMIT 1`
+                    const checkRes = await executeQuery(checkQuery)
 
-                console.log(`🔁 Registrando/actualizando Sender vía API: ${senderApiUrl} - payload:`, payload)
-
-                let lastSenderErr = null
-                for (let attempt = 1; attempt <= SENDER_MAX_RETRIES; attempt++) {
-                    try {
-                        const resp = await axios.post(senderApiUrl, payload, { headers, timeout: parseInt(process.env.CHAT_SENDER_TIMEOUT_MS || '8000', 10) })
-                        if (resp && resp.status === 200) {
-                            console.log(`✅ Sender registrado/actualizado (API): telefono_normalizado=${resp.data.telefono_normalizado || 'unknown'}, affected_rows=${resp.data.affected_rows ?? 'n/a'}`)
-                            registrationSuccess = true
-                            break
-                        } else {
-                            console.warn(`⚠️ Sender API devolvió status=${resp?.status}`)
+                    // Interpretar distintas formas de respuesta del endpoint SQL
+                    let cnt = 0
+                    if (checkRes) {
+                        if (Array.isArray(checkRes) && checkRes.length > 0) {
+                            cnt = parseInt(checkRes[0].cnt || Object.values(checkRes[0])[0] || 0, 10)
+                        } else if (checkRes.rows && checkRes.rows[0]) {
+                            cnt = parseInt(checkRes.rows[0].cnt || Object.values(checkRes.rows[0])[0] || 0, 10)
+                        } else if (typeof checkRes === 'object') {
+                            const first = Object.values(checkRes)[0]
+                            if (Array.isArray(first) && first.length > 0) {
+                                cnt = parseInt(first[0].cnt || Object.values(first[0])[0] || 0, 10)
+                            }
                         }
-                    } catch (err) {
-                        lastSenderErr = err
-                        const wait = 150 * attempt
-                        console.warn(`⚠️ Intento ${attempt}/${SENDER_MAX_RETRIES} fallo Sender API: ${err.code || err.message}; reintentando en ${wait}ms`)
-                        await new Promise(r => setTimeout(r, wait))
                     }
+                    senderExists = cnt > 0
+                } catch (chkErr) {
+                    console.warn('⚠️ Error comprobando existencia de Sender local:', chkErr && (chkErr.message || chkErr.code))
+                    // Si la comprobación falla, no bloqueamos el proceso: seguiremos intentando registrar
+                    senderExists = false
                 }
-                // Si no se registró via API, intentar fallback SQL
-                if (!registrationSuccess) {
-                    console.warn('⚠️ Sender API no registró al usuario; intentando fallback SQL')
-                    try {
-                        const updateQuery = `INSERT INTO WhatsappSenders (IdAgencia, IdUsuario, Telefono, FechaUltimaInteraccion, Version, SyncConversaciones, AutomatizacionesWhatsapp, CrucesAutomaticos, CrucesAutomaticosRGPDExterna, PilotoAutomatico, RecordatoriosVisitas) VALUES (${userData.IdAgencia || 0}, ${userData.IdGestor || 0}, '${deviceNumber}', NOW(), ${currentVersion}, COALESCE(${userData.SyncConversaciones || 0}, 0), COALESCE(${userData.AutomatizacionesWhatsapp || 0}, 0), COALESCE(${userData.CrucesAutomaticos || 0}, 0), COALESCE(${userData.CrucesAutomaticosRGPDExterna || 0}, 0), COALESCE(${userData.PilotoAutomatico || 0}, 0), COALESCE(${userData.RecordatoriosVisitas || 0}, 0)) ON DUPLICATE KEY UPDATE FechaUltimaInteraccion = NOW(), Version = ${currentVersion}, Telefono = '${normalizedNumber}', ImagenQR = NULL, PathEjecutable = NULL`
-                        await executeQuery(updateQuery)
-                        registrationSuccess = true
-                        console.log(`✅ Fallback: Usuario registrado localmente tras fallo de API: ${userData.Nombre || userData.nombre || ''} ${userData.Apellidos || userData.apellidos || ''} (${userData.IdGestor})`)
-                    } catch (fallbackErr) {
-                        console.error(`❌ Fallback también falló: ${fallbackErr && (fallbackErr.message || fallbackErr.code)}`)
-                        registrationSuccess = false
+
+                if (senderExists) {
+                    console.log('ℹ️ Sender ya existe localmente — no se llamará a la API Sender (evitar llamadas redundantes)')
+                    registrationSuccess = true
+                } else {
+                    // En lugar de ejecutar INSERT SQL local, llamar a la API Sender para nuevo vínculo
+                    const senderApiUrl = process.env.CHAT_SENDER_API_URL || 'https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Sender'
+
+                    const payload = {
+                        IdAgencia: userData.IdAgencia || 0,
+                        IdGestor: userData.IdGestor || 0,
+                        Telefono: deviceNumber,
+                        Version: currentVersion,
+                        SyncConversaciones: userData.SyncConversaciones || 0,
+                        AutomatizacionesWhatsapp: userData.AutomatizacionesWhatsapp || 0,
+                        CrucesAutomaticos: userData.CrucesAutomaticos || 0,
+                        CrucesAutomaticosRGPDExterna: userData.CrucesAutomaticosRGPDExterna || 0,
+                        PilotoAutomatico: userData.PilotoAutomatico || 0,
+                        RecordatoriosVisitas: userData.RecordatoriosVisitas || 0
+                    }
+
+                    const headers = { 'Content-Type': 'application/json' }
+                    if (process.env.CHAT_API_KEY) headers['x-api-key'] = process.env.CHAT_API_KEY
+
+                    console.log(`🔁 Registrando/actualizando Sender vía API: ${senderApiUrl} - payload:`, payload)
+
+                    let lastSenderErr = null
+                    for (let attempt = 1; attempt <= SENDER_MAX_RETRIES; attempt++) {
+                        try {
+                            const resp = await axios.post(senderApiUrl, payload, { headers, timeout: parseInt(process.env.CHAT_SENDER_TIMEOUT_MS || '8000', 10) })
+                            if (resp && resp.status === 200) {
+                                console.log(`✅ Sender registrado/actualizado (API): telefono_normalizado=${resp.data.telefono_normalizado || 'unknown'}, affected_rows=${resp.data.affected_rows ?? 'n/a'}`)
+                                registrationSuccess = true
+                                break
+                            } else {
+                                console.warn(`⚠️ Sender API devolvió status=${resp?.status}`)
+                            }
+                        } catch (err) {
+                            lastSenderErr = err
+                            const wait = 150 * attempt
+                            console.warn(`⚠️ Intento ${attempt}/${SENDER_MAX_RETRIES} fallo Sender API: ${err.code || err.message}; reintentando en ${wait}ms`)
+                            await new Promise(r => setTimeout(r, wait))
+                        }
+                    }
+
+                    // Si no se registró via API, intentar fallback SQL
+                    if (!registrationSuccess) {
+                        console.warn('⚠️ Sender API no registró al usuario; intentando fallback SQL')
+                        try {
+                            const updateQuery = `INSERT INTO WhatsappSenders (IdAgencia, IdUsuario, Telefono, FechaUltimaInteraccion, Version, SyncConversaciones, AutomatizacionesWhatsapp, CrucesAutomaticos, CrucesAutomaticosRGPDExterna, PilotoAutomatico, RecordatoriosVisitas) VALUES (${userData.IdAgencia || 0}, ${userData.IdGestor || 0}, '${deviceNumber}', NOW(), ${currentVersion}, COALESCE(${userData.SyncConversaciones || 0}, 0), COALESCE(${userData.AutomatizacionesWhatsapp || 0}, 0), COALESCE(${userData.CrucesAutomaticos || 0}, 0), COALESCE(${userData.CrucesAutomaticosRGPDExterna || 0}, 0), COALESCE(${userData.PilotoAutomatico || 0}, 0), COALESCE(${userData.RecordatoriosVisitas || 0}, 0)) ON DUPLICATE KEY UPDATE FechaUltimaInteraccion = NOW(), Version = ${currentVersion}, Telefono = '${normalizedNumber}', ImagenQR = NULL, PathEjecutable = NULL`
+                            await executeQuery(updateQuery)
+                            registrationSuccess = true
+                            console.log(`✅ Fallback: Usuario registrado localmente tras fallo de API: ${userData.Nombre || userData.nombre || ''} ${userData.Apellidos || userData.apellidos || ''} (${userData.IdGestor})`)
+                        } catch (fallbackErr) {
+                            console.error(`❌ Fallback también falló: ${fallbackErr && (fallbackErr.message || fallbackErr.code)}`)
+                            registrationSuccess = false
+                        }
                     }
                 }
 
-                // Si el registro fue exitoso, cachear resultado positivo y devolver userData
+                // Si el registro fue exitoso (o ya existía), cachear resultado positivo y devolver userData
                 if (registrationSuccess) {
                     USER_LOOKUP_CACHE.set(cacheKey, { data: userData, expiresAt: now + CACHE_TTL_MS })
                     return userData
@@ -750,8 +785,8 @@ async function connectWhatsApp(sessionId) {
                     userData = {
                         IdGestor: 0,
                         IdAgencia: 0,
-                        Nombre: 'DEV',
-                        Apellidos: 'USER',
+                        Nombre: 'Alex',
+                        Apellidos: 'Caht_bot',
                         SyncConversaciones: 1
                     }
                     console.log(`🛠️ [${sessionId.split('_').pop()}] SKIP_USER_VERIFICATION activo - permitiendo conexión de prueba (+${deviceNumber})`)
@@ -994,7 +1029,9 @@ async function connectWhatsApp(sessionId) {
                                     apellidos: userData ? userData.Apellidos : null,
                                     id_gestor: userData ? userData.IdGestor : null,
                                     id_agencia: userData ? userData.IdAgencia : null,
-                                    sync_conversaciones: userData ? userData.SyncConversaciones : 0
+                                    sync_conversaciones: userData ? userData.SyncConversaciones : 0,
+                                    // Nuevo campo: indicar si el gestor tiene piloto automático activado (1/0)
+                                    piloto_automatico: userData && (userData.PilotoAutomatico === 1 || userData.PilotoAutomatico === '1' || userData.PilotoAutomatico === true) ? 1 : 0
                                 }
                             }
                             
@@ -1062,6 +1099,13 @@ async function connectWhatsApp(sessionId) {
                                 messageData.grupo_info = { es_grupo: isGroup }
                             }
                             
+                            // DEBUG: imprimir usuario_vinculado antes de enviarlo al batch
+                            try {
+                                console.log('DEBUG usuario_vinculado:', JSON.stringify(messageData.usuario_vinculado))
+                            } catch (e) {
+                                console.error('DEBUG: error serializando usuario_vinculado', e.message)
+                            }
+
                             // Agregar al batch de webhooks el mensaje
                             addMessageToBatch(messageData)
                             
