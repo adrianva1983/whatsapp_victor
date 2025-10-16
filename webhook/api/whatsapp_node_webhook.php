@@ -35,6 +35,10 @@ $google_ai_studio_api_key = getenv('GOOGLE_AI_STUDIO_API_KEY') ?: ($google_ai_st
 // Configuración del endpoint de envío
 $WHATSAPP_API_URL = 'http://whatsapp-app:3000/api/send-message';
 
+// Configuración de la API de Chat History
+$CHAT_HISTORY_API_URL = getenv('CHAT_HISTORY_API_URL') ?: 'https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Create';
+$CHAT_API_KEY = getenv('CHAT_API_KEY') ?: 'mi_api_key_secreto_y_larga';
+
 //require($path."/Scripts-Gestion/conexion-nuevo.php");
 //require($path."/tareas-calculos/librerias_ia/librerias_ia.php");
 
@@ -62,10 +66,22 @@ function obtener_extension_mime($tipo_archivo) {}
 function procesar_foto_cliente($db, $url_foto, $id_cliente) {}
 
 // Función para generar hash de autenticación
-function generarHashWhatsapp($fecha) {}
+function generarHashWhatsapp($fecha) {
+    $text = "hipotea_whatsapp_$fecha";
+    return hash('sha256', $text);
+}
 
 // Función para generar parámetros de autenticación
-function obtenerParametrosAuth() {}
+function obtenerParametrosAuth() {
+    // Si DISABLE_AUTH está activo, no añadir parámetros
+    if (getenv('DISABLE_AUTH') === 'true') {
+        return '';
+    }
+    
+    $date = date('Y-m-d'); // YYYY-MM-DD
+    $hash = generarHashWhatsapp($date);
+    return "?hash=$hash&date=$date";
+}
 // Función principal para llamar a cualquier LLM
 function llamar_llm_api($mensaje, $contexto_conversacion = '', $plataforma = null, $modelo = null, $system_prompt = '') 
 {
@@ -462,6 +478,67 @@ function hacer_peticion_http($url, $data, $headers, $timeout = 30) {
     return $response;
 }
 
+// Función para guardar mensaje en el historial de chat (API Chat/Create)
+function guardarMensajeEnHistorial($telefono, $rol, $rol_label, $texto) 
+{
+    global $CHAT_HISTORY_API_URL, $CHAT_API_KEY;
+    
+    if (empty($telefono) || empty($texto)) {
+        $logDuplicate = "⚠️ [Chat History] Datos incompletos: telefono=$telefono, texto=" . substr($texto, 0, 50);
+        file_put_contents($logFile, $logDuplicate, FILE_APPEND);
+        return false;
+    }
+    
+    $data = [
+        'phone_number' => $telefono,
+        'role' => $rol,              // 'user' o 'assistant'
+        'role_label' => $rol_label,   // nombre del cliente o gestor
+        'text' => $texto,
+        'timestamp' => date('Y-m-d H:i:s')
+    ];
+    
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $CHAT_HISTORY_API_URL);
+    curl_setopt($ch, CURLOPT_POST, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, [
+        'Content-Type: application/json',
+        'x-api-key: ' . $CHAT_API_KEY
+    ]);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 5);  // ⏱️ Reducido a 5 segundos para fallar rápido
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 3); // Timeout de conexión
+    
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_error = curl_error($ch);
+    curl_close($ch);
+    
+    if ($http_code === 201 || $http_code === 200) {
+        $result = json_decode($response, true);
+        $id = $result['id'] ?? 'unknown';
+        error_log("✅ [Chat History] Mensaje guardado en API (ID: $id) - rol=$rol, telefono=$telefono");
+        return true;
+    }
+    
+    // 💾 FALLBACK: Guardar en archivo local si la API falla
+    $logDir = __DIR__ . '/../logs';
+    $fallbackFile = $logDir . '/chat_history_fallback.jsonl';
+    
+    $logEntry = json_encode($data) . "\n";
+    file_put_contents($fallbackFile, $logEntry, FILE_APPEND);
+    
+    // ⚠️ IGNORAR ERRORES API - Solo logear pero devolver true para continuar
+    if ($curl_error || $http_code === 0) {
+        error_log("💾 [Chat History] Guardado en fallback local - rol=$rol, telefono=$telefono - API Error: $curl_error");
+    } else {
+        error_log("💾 [Chat History] Guardado en fallback local - rol=$rol, telefono=$telefono - HTTP $http_code");
+    }
+    
+    // ✅ Devolver true para que el flujo continúe normalmente
+    return true;
+}
+
 // Función para enviar mensaje WhatsApp via API
 function enviarMensajeWhatsApp($telefono_origen, $telefono_destino, $mensaje) 
 {
@@ -489,16 +566,24 @@ function enviarMensajeWhatsApp($telefono_origen, $telefono_destino, $mensaje)
     
     $response = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_error = curl_error($ch);
     curl_close($ch);
     
     if ($http_code === 200) {
         $result = json_decode($response, true);
-        return $result['success'] ?? false;
+        $success = $result['success'] ?? false;
+        if ($success) {
+            error_log("✅ [WhatsApp] Mensaje enviado: $telefono_origen → $telefono_destino");
+        } else {
+            error_log("⚠️ [WhatsApp] API retornó success=false: " . json_encode($result));
+        }
+        return $success;
     }
     
-    /*echo "Error enviando mensaje: HTTP $http_code - $response\n";
-    echo "Data enviado: ".json_encode($data)."\n";
-    print_r($data);*/
+    // Log de error detallado
+    error_log("❌ [WhatsApp] Error enviando mensaje: HTTP $http_code - Response: " . substr($response, 0, 200) . ($curl_error ? " - cURL error: $curl_error" : ""));
+    error_log("❌ [WhatsApp] Data enviado: " . json_encode($data));
+    error_log("❌ [WhatsApp] URL: $url_con_auth");
     return false;
 }
 
@@ -569,6 +654,45 @@ try {
     
     $mensajes = $data['mensajes'] ?? [];
     $total = $data['total'] ?? count($mensajes);
+
+    // 🛡️ DEDUPLICACIÓN: Evitar procesar mensajes duplicados
+    $cacheFile = $logDir . '/processed_messages.cache';
+    $cacheExpiration = 300; // 5 minutos
+    
+    // Limpiar caché expirada
+    if (file_exists($cacheFile)) {
+        $cache = json_decode(file_get_contents($cacheFile), true) ?: [];
+        $now = time();
+        $cache = array_filter($cache, function($timestamp) use ($now, $cacheExpiration) {
+            return ($now - $timestamp) < $cacheExpiration;
+        });
+    } else {
+        $cache = [];
+    }
+    
+    // Generar hash único para este batch de mensajes
+    $batchHash = md5(json_encode($mensajes));
+    
+    if (isset($cache[$batchHash])) {
+        $timeSinceProcessed = time() - $cache[$batchHash];
+        $logDuplicate = "🚫 DUPLICADO DETECTADO - Batch ya procesado hace {$timeSinceProcessed}s (hash: " . substr($batchHash, 0, 8) . ")\n";
+        file_put_contents($logFile, $logDuplicate, FILE_APPEND);
+        
+        echo json_encode([
+            'success' => true,
+            'mensaje' => 'Mensaje duplicado - ignorado',
+            'hash' => substr($batchHash, 0, 8),
+            'cached_at' => date('Y-m-d H:i:s', $cache[$batchHash])
+        ]);
+        exit(0);
+    }
+    
+    // Marcar este batch como procesado
+    $cache[$batchHash] = time();
+    file_put_contents($cacheFile, json_encode($cache));
+    
+    $logEntry3 = "✅ NUEVO MENSAJE - Hash: " . substr($batchHash, 0, 8) . "\n";
+    file_put_contents($logFile, $logEntry3, FILE_APPEND);
 
     
     
@@ -758,6 +882,14 @@ try {
             $logDebug = "🔍 DEBUG - Nombres: Cliente=$nombre_cliente, Gestor=$nombre_gestor\n";
             file_put_contents($logFile, $logDebug, FILE_APPEND);
             
+            // 💾 Guardar mensaje del cliente en el historial
+            guardarMensajeEnHistorial(
+                $telefono_cliente,
+                'user',
+                $nombre_cliente ?: 'Cliente',
+                $texto_mensaje
+            );
+            
             // Solo proceder con respuestas automáticas si el gestor tiene piloto_automatico activado
             if (!$piloto_automatico) {
                 $logDebug = "🔍 DEBUG - piloto_automatico DESACTIVADO para gestor={$nombre_gestor} ({$telefono_gestor}) - no se enviará respuesta automática\n";
@@ -775,6 +907,15 @@ try {
                     $logDebug = "🔍 DEBUG - Enviando respuesta IA de {$conversacion['telefono_gestor']} a {$conversacion['telefono_cliente']}\n";
                     file_put_contents($logFile, $logDebug, FILE_APPEND);
                     
+                    // 💾 Guardar respuesta rápida ANTES de enviar (garantiza registro)
+                    guardarMensajeEnHistorial(
+                        $telefono_cliente,
+                        'assistant',
+                        $nombre_gestor,
+                        $respuesta_ia
+                    );
+                    
+                    // Enviar mensaje a WhatsApp
                     $mensaje_enviado = enviarMensajeWhatsApp($conversacion['telefono_gestor'], $conversacion['telefono_cliente'], $respuesta_ia);
                     
                     $logDebug = "🔍 DEBUG - Resultado envio: " . ($mensaje_enviado ? 'SUCCESS' : 'FAILED') . "\n";
@@ -796,11 +937,29 @@ try {
                         $key_present = getenv('GOOGLE_AI_STUDIO_API_KEY') ? 'YES' : 'NO';
                         $logDebug = "⚠️ DEBUG - LLM devolvió NULL o vacío. Comprueba la clave GOOGLE_AI_STUDIO_API_KEY en el contenedor (presente=$key_present) y la conectividad a la API.\n";
                         file_put_contents($logFile, $logDebug, FILE_APPEND);
+                        
+                        // � Guardar ERROR en el historial (para debugging)
+                        guardarMensajeEnHistorial(
+                            $telefono_cliente,
+                            'assistant',
+                            $nombre_gestor,
+                            '[ERROR: El LLM no generó respuesta - revisar logs]'
+                        );
                     } else {
                         $logDebug = "🔍 DEBUG - Mensaje IA generado: " . substr($respuesta_ia, 0, 200) . "\n";
                         file_put_contents($logFile, $logDebug, FILE_APPEND);
+                        
+                        // 💾 Guardar respuesta del LLM ANTES de enviar (garantiza registro)
+                        guardarMensajeEnHistorial(
+                            $telefono_cliente,
+                            'assistant',
+                            $nombre_gestor,
+                            $respuesta_ia
+                        );
+                        
                         // Enviar la respuesta generada por IA
                         $mensaje_enviado = enviarMensajeWhatsApp($conversacion['telefono_gestor'], $conversacion['telefono_cliente'], $respuesta_ia);
+                        
                         $logDebug = "🔍 DEBUG - Resultado envio IA: " . ($mensaje_enviado ? 'SUCCESS' : 'FAILED') . "\n";
                         file_put_contents($logFile, $logDebug, FILE_APPEND);
                     }

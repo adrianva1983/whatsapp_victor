@@ -41,6 +41,10 @@ services:
       CHAT_API_KEY: "mi_api_key_secreto_y_larga"
       CHAT_GESTOR_API_URL: "https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Gestor"
       CHAT_SENDER_API_URL: "https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Sender"
+      # Timeout para la llamada al API Gestor (ms). Aumentado a 30s para conexiones lentas
+      CHAT_GESTOR_TIMEOUT_MS: "30000"
+      # Reintentos para el API Gestor
+      CHAT_GESTOR_MAX_RETRIES: "5"
       # Timeout para la llamada al API Sender (ms). Postman mostró ~10s, subir a 15s para evitar ECONNABORTED
       CHAT_SENDER_TIMEOUT_MS: "15000"
       # Reintentos para el API Sender
@@ -98,6 +102,10 @@ services:
     environment:
       # Define la clave de API para Google AI Studio (Gemini). Configure en un .env o en el entorno del sistema.
       - GOOGLE_AI_STUDIO_API_KEY=${GOOGLE_AI_STUDIO_API_KEY}
+      # URL de la API de Chat History para guardar mensajes
+      - CHAT_HISTORY_API_URL=https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Create
+      # API Key compartida para autenticación
+      - CHAT_API_KEY=mi_api_key_secreto_y_larga
     networks:
       - whatsapp_network
     healthcheck:
