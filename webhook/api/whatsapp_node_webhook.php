@@ -37,6 +37,7 @@ $WHATSAPP_API_URL = 'http://whatsapp-app:3000/api/send-message';
 
 // Configuración de la API de Chat History
 $CHAT_HISTORY_API_URL = getenv('CHAT_HISTORY_API_URL') ?: 'https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Create';
+$CHAT_HISTORY_LIST_API_URL = getenv('CHAT_HISTORY_LIST_API_URL') ?: 'https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/List';
 $CHAT_API_KEY = getenv('CHAT_API_KEY') ?: 'mi_api_key_secreto_y_larga';
 
 //require($path."/Scripts-Gestion/conexion-nuevo.php");
@@ -258,47 +259,38 @@ function llamar_openai_api($mensaje, $contexto_conversacion = '', $modelo = 'gpt
 function llamar_anthropic_api($mensaje, $contexto_conversacion = '', $modelo = 'claude-3-haiku', $system_prompt = '') {}
 function construir_contexto_cliente($db, $id_cliente, $id_agencia) {}
 
-// Función auxiliar para el system promt
-function construir_prompt_inmobiliaria($mensaje, $contexto_conversacion = '', $nombre_agente = 'María', $nombre_cliente = '') {
+// Función auxiliar para el system prompt
+function construir_prompt_inmobiliaria($mensaje, $contexto_conversacion = '', $nombre_agente = 'Alex', $nombre_cliente = '') {
     // Normalizar nombres
-    $nombre_agente = trim($nombre_agente ?: 'Asesor');
-    $nombre_cliente = trim($nombre_cliente ?: 'Estimado/a cliente');
+    $nombre_agente = trim($nombre_agente ?: 'Alex');
+    $nombre_cliente = trim($nombre_cliente);
 
-    $prompt = "Eres $nombre_agente, un/a asesor/a especializado/a en hipotecas que trabaja dentro de un CRM hipotecario en España. " .
-              "Tu objetivo principal es ayudar a los clientes con consultas sobre hipotecas (simulaciones, requisitos, documentación), además de orientar en compra/venta y alquiler cuando proceda." . "\n\n";
-
-    // Instrucciones de comportamiento
-    $prompt .= "INSTRUCCIONES:\n";
-    $prompt .= "- Responde siempre en español (España), con un tono profesional pero cercano.\n";
-    $prompt .= "- Mantén las respuestas concisas y útiles (máximo ~120 palabras), salvo que el contexto requiera más detalle.\n";
-    $prompt .= "- Si falta información relevante para dar una respuesta precisa, pide los datos clave (ej.: importe solicitado, plazo en años, ingresos netos, tipo de contrato, gastos mensuales).\n";
-    $prompt .= "- NO inventes datos (precios exactos, disponibilidad, condiciones concretas). Si no conoces algo, indica que es orientativo y ofrece buscar o agendar una cita.\n";
-    $prompt .= "- Para consultas complejas o que requieran documentación, explica brevemente qué documentos se necesitan (DNI, nóminas, vida laboral, declaración de la renta, modelos para autónomos) y sugiere agendar una cita o pedir que envíen la documentación.\n";
-    $prompt .= "- Evita tecnicismos excesivos; cuando uses términos técnicos, explícalos brevemente.\n\n";
-
-    // Información del cliente (si existe)
-    if (!empty($nombre_cliente) && strtolower($nombre_cliente) !== 'estimado/a cliente' && strtolower($nombre_cliente) !== 'estimado/a cliente') {
-        $prompt .= "ATENCIÓN AL CLIENTE: El cliente se llama $nombre_cliente.\n";
+    // System prompt conciso y directo
+    $prompt = "Eres $nombre_agente, asesor hipotecario de Hipotea en España. Mantén un tono cercano y profesional. Responde en mensajes cortos (máximo 2-3 frases) y, cuando necesites información adicional, formula solo UNA pregunta clara por turno.\n\n";
+    
+    $prompt .= "Directrices esenciales:\n";
+    $prompt .= "- Brevedad: Respuestas concisas y directas. Evita explicaciones largas.\n";
+    $prompt .= "- Una pregunta a la vez: Si necesitas más datos, pregunta una sola cosa y espera la respuesta.\n";
+    $prompt .= "- Memoria: Usa el nombre del cliente si ya lo proporcionó; no lo vuelvas a pedir.\n";
+    $prompt .= "- Objetivo útil: Propón el siguiente paso (ej.: agendar llamada, pedir documentación) de forma natural y no agresiva.\n";
+    $prompt .= "- Transparencia y cumplimiento: Si surge una consulta legal o técnica compleja, recomienda derivarla a un especialista.\n\n";
+    
+    // Información del cliente si está disponible
+    if (!empty($nombre_cliente)) {
+        $prompt .= "El cliente se llama $nombre_cliente. Usa su nombre de forma natural en tus respuestas.\n\n";
     }
-
-    // Recordatorio: privacidad y captura de lead
-    $prompt .= "NOTA: Eres parte de un CRM hipotecario; cuando sea apropiado, captura el interés del cliente con un CTA para agendar llamada/visita y recuerda que los datos sensibles deben manejarse con privacidad.\n\n";
-
-    // Contexto previo si se proporciona
+    
+    $prompt .= "Si requieres contexto, revisa el historial antes de preguntar. Prioriza la utilidad y la experiencia del cliente.\n\n";
+    
+    // Contexto previo (historial de conversación)
     if (!empty($contexto_conversacion)) {
-        $prompt .= "CONTEXTO PREVIO:\n" . trim($contexto_conversacion) . "\n\n";
+        $prompt .= trim($contexto_conversacion) . "\n";
     }
 
-    // Pregunta/consulta actual
-    $prompt .= "CONSULTA ACTUAL:\n" . trim($mensaje) . "\n\n";
-
-    // Ejemplo de formato de respuesta esperado para guiar al modelo
-    $prompt .= "FORMATO ESPERADO:\n";
-    $prompt .= "- Inicio breve y saludo opcional (ej.: Hola María, gracias por tu mensaje.).\n";
-    $prompt .= "- Respuesta clara y accionable (si procede, pasos a seguir).\n";
-    $prompt .= "- Cierre con CTA si aplica (ej.: ¿Te interesa que te reserve una cita?).\n\n";
-
-    $prompt .= "Responde como $nombre_agente de forma útil, profesional y empática:";
+    // Mensaje actual del cliente
+    $prompt .= "Cliente: " . trim($mensaje) . "\n\n";
+    
+    $prompt .= "Responde como $nombre_agente de forma breve, útil y profesional:";
 
     return $prompt;
 }
@@ -376,7 +368,7 @@ function detectar_intencion_mensaje($mensaje) {
 }
 
 // Función para respuestas rápidas según intención en contexto hipotecario
-function obtener_respuesta_rapida($intencion, $nombre_agente = 'Asesor', $nombre_cliente = '') {
+function obtener_respuesta_rapida($intencion, $nombre_agente = 'Alex', $nombre_cliente = '') {
     $saludo = !empty($nombre_cliente) ? "Hola $nombre_cliente" : "Hola";
     
     switch ($intencion) {
@@ -537,6 +529,166 @@ function guardarMensajeEnHistorial($telefono, $rol, $rol_label, $texto)
     
     // ✅ Devolver true para que el flujo continúe normalmente
     return true;
+}
+
+// Función para obtener historial de chat desde la API (API Chat/List)
+function obtenerHistorialChat($telefono, $limit = 10) 
+{
+    global $CHAT_HISTORY_LIST_API_URL, $CHAT_API_KEY;
+    
+    if (empty($telefono)) {
+        $logDir = __DIR__ . '/../logs';
+        if (!file_exists($logDir)) @mkdir($logDir, 0755, true);
+        $logFile = $logDir . '/webhook_' . date('Ymd') . '.log';
+        $entry = date('c') . " - ⚠️ [Chat History] Teléfono vacío para obtener historial\n";
+        file_put_contents($logFile, $entry, FILE_APPEND);
+        return [];
+    }
+    
+    // Construir URL con parámetros GET
+    $url = $CHAT_HISTORY_LIST_API_URL . '?phone=' . urlencode($telefono) . '&limit=' . intval($limit);
+
+    // Configuración de reintentos y timeouts (evita fallos por conexiones lentas)
+    // Se permite configurar el timeout total máximo (por defecto 30s) para evitar que
+    // varios reintentos sumen más tiempo del esperado.
+    $maxTotalTimeout = intval(getenv('CHAT_HISTORY_MAX_TOTAL_TIMEOUT') ?: 50); // segundos totales permitidos
+    $maxRetries = intval(getenv('CHAT_HISTORY_MAX_RETRIES') ?: 3); // reintentos adicionales
+    $attempt = 0;
+    $response = null;
+    $http_code = 0;
+    $curl_error = '';
+
+    // Calcular timeout disponible por intento considerando backoff y número de intentos.
+    // Estrategia simple: dividir el tiempo restante entre intentos pendientes y reservar
+    // unos segundos para el backoff. Iremos recalculando en cada iteración.
+    // Preparar logFile local para todas las entradas de esta función
+    $logDir = __DIR__ . '/../logs';
+    if (!file_exists($logDir)) @mkdir($logDir, 0755, true);
+    $logFile = $logDir . '/webhook_' . date('Ymd') . '.log';
+
+    $startTime = microtime(true);
+    $totalAttempts = $maxRetries + 1;
+
+    // Log inicial con parámetros
+    $entryInit = date('c') . " - 🔎 [Chat History] Inicio obtenerHistorialChat telefono=$telefono limit=$limit maxTotalTimeout={$maxTotalTimeout}s maxRetries={$maxRetries}\n";
+    file_put_contents($logFile, $entryInit, FILE_APPEND);
+
+    while ($attempt <= $maxRetries) {
+        $attempt++;
+
+        $ch = curl_init();
+        curl_setopt($ch, CURLOPT_URL, $url);
+        curl_setopt($ch, CURLOPT_HTTPHEADER, [
+            'Content-Type: application/json',
+            'x-api-key: ' . $CHAT_API_KEY
+        ]);
+        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    // Recalcular tiempo restante y asignar un timeout para este intento
+    $elapsed = microtime(true) - $startTime;
+    $remaining = max(0, $maxTotalTimeout - intval($elapsed));
+
+    // Intentos restantes (incluyendo este)
+    $attemptsRemaining = max(1, $totalAttempts - ($attempt - 1));
+
+    // Reservar máximo 1s por backoff futuro por intento restante
+    $reservedForBackoff = $attemptsRemaining * 1;
+
+    // Timeout objetivo para esta petición: repartir lo que queda entre intentos
+    $timeout_for_attempt = max(2, intval(floor(($remaining - $reservedForBackoff) / $attemptsRemaining)));
+    // Connect timeout será la mitad del timeout de intento, con mínimo 2s
+    $connect_timeout_for_attempt = max(2, intval(floor($timeout_for_attempt / 2)));
+
+    // Protección: no exceder 20s por intento
+    $timeout_for_attempt = min($timeout_for_attempt, 20);
+    $connect_timeout_for_attempt = min($connect_timeout_for_attempt, 10);
+
+    $entryParams = date('c') . " - 🔧 [Chat History] Attempt params: attempt=$attempt, timeout={$timeout_for_attempt}s, connect_timeout={$connect_timeout_for_attempt}s, maxTotalTimeout={$maxTotalTimeout}s, elapsed={$elapsed}s\n";
+    file_put_contents($logFile, $entryParams, FILE_APPEND);
+
+    curl_setopt($ch, CURLOPT_TIMEOUT, $timeout_for_attempt);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $connect_timeout_for_attempt);
+
+        $response = curl_exec($ch);
+        $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curl_error = curl_error($ch);
+        curl_close($ch);
+
+        // Log intento
+        $logDir = __DIR__ . '/../logs';
+        if (!file_exists($logDir)) @mkdir($logDir, 0755, true);
+        $logFile = $logDir . '/webhook_' . date('Ymd') . '.log';
+        $entry = date('c') . " - 🔁 [Chat History] Intento $attempt para obtener historial desde: $url - HTTP $http_code - cURL: $curl_error\n";
+        file_put_contents($logFile, $entry, FILE_APPEND);
+
+        if ($response && $http_code === 200) {
+            $result = json_decode($response, true);
+            $messages = $result['data'] ?? [];
+            $entry2 = date('c') . " - ✅ [Chat History] Obtenidos " . count($messages) . " mensajes del historial para $telefono\n";
+            file_put_contents($logFile, $entry2, FILE_APPEND);
+            return $messages;
+        }
+
+        // Backoff (1s, 2s, 4s...) pero respetando el timeout total restante
+        if ($attempt <= $maxRetries) {
+            $nominal_backoff = pow(2, $attempt - 1);
+            $backoff = min(8, $nominal_backoff);
+
+            // No superar el tiempo total permitido
+            $elapsed = microtime(true) - $startTime;
+            $remaining = max(0, $maxTotalTimeout - intval($elapsed));
+            if ($remaining <= 1) {
+                $entryWait = date('c') . " - 🕒 [Chat History] No hay tiempo restante para backoff, saltando espera\n";
+                file_put_contents($logFile, $entryWait, FILE_APPEND);
+            } else {
+                $sleepFor = min($backoff, $remaining - 1);
+                if ($sleepFor > 0) {
+                    $entryWait = date('c') . " - 🕒 [Chat History] Esperando {$sleepFor}s antes del siguiente intento\n";
+                    file_put_contents($logFile, $entryWait, FILE_APPEND);
+                    sleep($sleepFor);
+                }
+            }
+        }
+    }
+
+    // Si llegamos aquí, todos los intentos fallaron. Logear y devolver array vacío.
+    if ($curl_error || $http_code === 0) {
+        $entry = date('c') . " - ⚠️ [Chat History] Error obteniendo historial para $telefono después de $attempt intentos - cURL: $curl_error\n";
+    } else {
+        $entry = date('c') . " - ⚠️ [Chat History] Error obteniendo historial para $telefono después de $attempt intentos - HTTP $http_code\n";
+    }
+    file_put_contents($logFile, $entry, FILE_APPEND);
+
+    return [];
+}
+
+// Función para construir contexto de conversación a partir del historial
+function construirContextoDesdeHistorial($mensajes) 
+{
+    if (empty($mensajes)) {
+        return '';
+    }
+    
+    // Los mensajes vienen ordenados DESC (más recientes primero), invertir para cronológico
+    $mensajes = array_reverse($mensajes);
+    
+    $contexto = "HISTORIAL DE CONVERSACIÓN RECIENTE:\n\n";
+    
+    foreach ($mensajes as $msg) {
+        $rol = $msg['role'] ?? 'unknown';
+        $texto = $msg['text'] ?? '';
+        $timestamp = $msg['timestamp'] ?? '';
+        
+        // Formatear según el rol
+        if ($rol === 'user') {
+            $contexto .= "Cliente: $texto\n";
+        } elseif ($rol === 'assistant') {
+            $contexto .= "Asesor: $texto\n";
+        }
+    }
+    
+    $contexto .= "\n";
+    
+    return $contexto;
 }
 
 // Función para enviar mensaje WhatsApp via API
@@ -874,7 +1026,7 @@ try {
                 $nombre_cliente = $conversacion['contacto_remitente']['nombre'];
             }
             
-            $nombre_gestor = 'Asesor';
+            $nombre_gestor = 'Alex';
             if (isset($conversacion['usuario_vinculado']['nombre'])) {
                 $nombre_gestor = $conversacion['usuario_vinculado']['nombre'];
             }
@@ -926,8 +1078,15 @@ try {
                     $logDebug = "🤖 [Piloto Automático] Usando IA para generar respuesta personalizada" . "\n";
                     file_put_contents($logFile, $logDebug, FILE_APPEND);
 
-                    // Llamar al LLM usando el texto del mensaje recibido
-                    $respuesta_ia = llamar_llm_api($texto_mensaje, '', null, null, '');
+                    // 📚 Obtener historial de conversación desde la API
+                    $historial = obtenerHistorialChat($telefono_cliente, 10);
+                    $contexto_conversacion = construirContextoDesdeHistorial($historial);
+                    
+                    $logDebug = "📚 [Contexto] Historial obtenido: " . count($historial) . " mensajes\n";
+                    file_put_contents($logFile, $logDebug, FILE_APPEND);
+
+                    // Llamar al LLM usando el texto del mensaje recibido CON contexto del historial
+                    $respuesta_ia = llamar_llm_api($texto_mensaje, $contexto_conversacion, null, null, '');
 
                     // Registrar la respuesta cruda del LLM para diagnóstico
                     $logDebug = "🔍 DEBUG - Raw LLM respuesta: " . var_export($respuesta_ia, true) . "\n";

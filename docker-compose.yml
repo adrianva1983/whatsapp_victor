@@ -104,6 +104,8 @@ services:
       - GOOGLE_AI_STUDIO_API_KEY=${GOOGLE_AI_STUDIO_API_KEY}
       # URL de la API de Chat History para guardar mensajes
       - CHAT_HISTORY_API_URL=https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/Create
+      # URL de la API de Chat History para listar/obtener mensajes
+      - CHAT_HISTORY_LIST_API_URL=https://crabbedly-unpersonalized-angelique.ngrok-free.dev/API/Chat/List
       # API Key compartida para autenticación
       - CHAT_API_KEY=mi_api_key_secreto_y_larga
     networks:
